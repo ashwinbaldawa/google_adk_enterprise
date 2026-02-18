@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADK Enterprise — Evaluation Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-card: #111827;
+            --bg-card-hover: #1a2332;
+            --border: #1e293b;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-amber: #f59e0b;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-cyan: #06b6d4;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            padding: 24px 40px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(180deg, #0f1623 0%, var(--bg-primary) 100%);
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+
+        .header h1 span {
+            color: var(--accent-cyan);
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+
+        .header-meta {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .pulse {
+            display: inline-block;
+            width: 8px; height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Main layout */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 32px 40px;
+        }
+
+        /* Score cards row */
+        .score-cards {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .score-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .score-card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--text-muted);
+        }
+
+        .score-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+        }
+
+        .score-card.green::before { background: var(--accent-green); }
+        .score-card.red::before { background: var(--accent-red); }
+        .score-card.amber::before { background: var(--accent-amber); }
+
+        .score-card .metric-name {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+
+        .score-card .score-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .score-card .score-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .score-card .pass-fail {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            margin-top: 8px;
+        }
+
+        .pass-fail .pass { color: var(--accent-green); }
+        .pass-fail .fail { color: var(--accent-red); }
+
+        /* Charts grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .chart-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+        }
+
+        .chart-card h3 {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+        }
+
+        /* Details table */
+        .table-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            overflow-x: auto;
+        }
+
+        .table-card h3 {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #1a2332;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        tr:hover td { background: var(--bg-card-hover); }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .badge.pass { background: #052e16; color: var(--accent-green); }
+        .badge.fail { background: #450a0a; color: var(--accent-red); }
+        .badge.warn { background: #422006; color: var(--accent-amber); }
+
+        .score-bar {
+            width: 60px; height: 6px;
+            background: #1e293b;
+            border-radius: 3px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }
+
+        .score-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .loading::after {
+            content: '';
+            display: block;
+            width: 32px; height: 32px;
+            margin: 16px auto;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .score-cards { grid-template-columns: repeat(3, 1fr); }
+            .charts-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .score-cards { grid-template-columns: repeat(2, 1fr); }
+            .container { padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>ADK</span> Enterprise — Evaluation Dashboard</h1>
+        <div class="header-meta">
+            <span class="pulse"></span>
+            <span id="last-updated">Loading...</span>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Score Cards -->
+        <div class="score-cards" id="score-cards">
+            <div class="loading">Loading metrics...</div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>Metric Scores — Radar Overview</h3>
+                <div class="chart-container">
+                    <canvas id="radarChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>Pass / Fail Distribution</h3>
+                <div class="chart-container">
+                    <canvas id="passfailChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Details Table -->
+        <div class="table-card">
+            <h3>Recent Evaluations</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Score</th>
+                        <th>Label</th>
+                        <th>Reasoning</th>
+                        <th>Model</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="eval-table">
+                    <tr><td colspan="6" class="loading">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+        const METRIC_COLORS = {
+            'tool_accuracy':      '#3b82f6',
+            'answer_correctness': '#8b5cf6',
+            'safety':             '#10b981',
+            'routing_accuracy':   '#06b6d4',
+            'faithfulness':       '#f59e0b',
+        };
+
+        const METRIC_LABELS = {
+            'tool_accuracy':      'Tool Accuracy',
+            'answer_correctness': 'Answer Correctness',
+            'safety':             'Safety',
+            'routing_accuracy':   'Routing Accuracy',
+            'faithfulness':       'Faithfulness',
+        };
+
+        // ---- Fetch data ----
+        async function fetchData(endpoint) {
+            try {
+                const resp = await fetch(`${API}${endpoint}`);
+                return await resp.json();
+            } catch (e) {
+                console.error(`Failed to fetch ${endpoint}:`, e);
+                return [];
+            }
+        }
+
+        // ---- Score Cards ----
+        function renderScoreCards(data) {
+            const container = document.getElementById('score-cards');
+            if (!data.length) {
+                container.innerHTML = '<div class="loading">No evaluation data yet. Run: python evaluate.py</div>';
+                return;
+            }
+
+            container.innerHTML = data.map(d => {
+                const score = parseFloat(d.avg_score);
+                const colorClass = score >= 0.7 ? 'green' : score >= 0.4 ? 'amber' : 'red';
+                const scoreColor = score >= 0.7 ? 'var(--accent-green)' : score >= 0.4 ? 'var(--accent-amber)' : 'var(--accent-red)';
+
+                return `
+                    <div class="score-card ${colorClass}">
+                        <div class="metric-name">${METRIC_LABELS[d.metric_name] || d.metric_name}</div>
+                        <div class="score-value" style="color: ${scoreColor}">${(score * 100).toFixed(1)}%</div>
+                        <div class="score-meta">${d.total_evals} evaluations</div>
+                        <div class="pass-fail">
+                            <span class="pass">✓ ${d.pass_count}</span> &nbsp;
+                            <span class="fail">✗ ${d.fail_count}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // ---- Radar Chart ----
+        function renderRadarChart(data) {
+            const ctx = document.getElementById('radarChart').getContext('2d');
+            const labels = data.map(d => METRIC_LABELS[d.metric_name] || d.metric_name);
+            const scores = data.map(d => parseFloat(d.avg_score));
+
+            new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Avg Score',
+                        data: scores,
+                        backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                        borderColor: '#06b6d4',
+                        borderWidth: 2,
+                        pointBackgroundColor: scores.map(s =>
+                            s >= 0.7 ? '#10b981' : s >= 0.4 ? '#f59e0b' : '#ef4444'
+                        ),
+                        pointBorderColor: '#0a0e17',
+                        pointBorderWidth: 2,
+                        pointRadius: 5,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        r: {
+                            beginAtZero: true,
+                            max: 1,
+                            ticks: {
+                                stepSize: 0.2,
+                                color: '#64748b',
+                                backdropColor: 'transparent',
+                                font: { family: 'JetBrains Mono', size: 10 },
+                            },
+                            grid: { color: '#1e293b' },
+                            angleLines: { color: '#1e293b' },
+                            pointLabels: {
+                                color: '#94a3b8',
+                                font: { family: 'Outfit', size: 12, weight: 500 },
+                            },
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                    }
+                }
+            });
+        }
+
+        // ---- Pass/Fail Chart ----
+        function renderPassFailChart(data) {
+            const ctx = document.getElementById('passfailChart').getContext('2d');
+            const labels = data.map(d => (METRIC_LABELS[d.metric_name] || d.metric_name).split(' ')[0]);
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Pass',
+                            data: data.map(d => parseInt(d.pass_count)),
+                            backgroundColor: '#065f46',
+                            borderColor: '#10b981',
+                            borderWidth: 1,
+                            borderRadius: 4,
+                        },
+                        {
+                            label: 'Fail',
+                            data: data.map(d => parseInt(d.fail_count)),
+                            backgroundColor: '#7f1d1d',
+                            borderColor: '#ef4444',
+                            borderWidth: 1,
+                            borderRadius: 4,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 10 } },
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { color: '#1e293b' },
+                            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } },
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8', font: { family: 'Outfit', size: 12 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ---- Details Table ----
+        function renderTable(data) {
+            const tbody = document.getElementById('eval-table');
+            if (!data.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No evaluations yet</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.slice(0, 30).map(d => {
+                const score = parseFloat(d.score);
+                const badgeClass = score >= 0.7 ? 'pass' : score >= 0.4 ? 'warn' : 'fail';
+                const barColor = score >= 0.7 ? '#10b981' : score >= 0.4 ? '#f59e0b' : '#ef4444';
+                const time = new Date(d.created_at).toLocaleString();
+                const reasoning = (d.reasoning || '').substring(0, 60);
+
+                return `
+                    <tr>
+                        <td style="color:${METRIC_COLORS[d.metric_name] || '#94a3b8'}">${METRIC_LABELS[d.metric_name] || d.metric_name}</td>
+                        <td>
+                            ${score.toFixed(2)}
+                            <span class="score-bar">
+                                <span class="score-bar-fill" style="width:${score*100}%;background:${barColor}"></span>
+                            </span>
+                        </td>
+                        <td><span class="badge ${badgeClass}">${d.label}</span></td>
+                        <td style="color:var(--text-secondary);font-family:Outfit;font-size:12px">${reasoning}</td>
+                        <td style="color:var(--text-muted)">${d.eval_model || '-'}</td>
+                        <td style="color:var(--text-muted)">${time}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // ---- Init ----
+        async function init() {
+            document.getElementById('last-updated').textContent =
+                `Updated: ${new Date().toLocaleTimeString()}`;
+
+            const [summary, details] = await Promise.all([
+                fetchData('/api/eval/summary'),
+                fetchData('/api/eval/details'),
+            ]);
+
+            renderScoreCards(summary);
+            if (summary.length) {
+                renderRadarChart(summary);
+                renderPassFailChart(summary);
+            }
+            renderTable(details);
+        }
+
+        init();
+
+        // Auto-refresh every 30 seconds
+        setInterval(init, 30000);
+    </script>
+</body>
+</html>
