@@ -22,6 +22,7 @@ from google.adk import Runner
 from google.genai import types
 
 from src.agent import root_agent
+<<<<<<< HEAD
 from src.db import PostgresSessionService, SQLiteSessionService
 
 
@@ -40,6 +41,9 @@ async def create_session_service(tenant_id, agent_name, model_used):
         return await SQLiteSessionService.create(
             tenant_id=tenant_id, agent_name=agent_name, model_used=model_used,
         )
+=======
+from src.db import PostgresSessionService
+>>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
 
 
 async def run_interactive():
@@ -48,8 +52,16 @@ async def run_interactive():
     agent_name = os.getenv("AGENT_NAME", "assistant")
     model_used = os.getenv("MODEL_USED", "ollama/llama3.2")
 
+<<<<<<< HEAD
     try:
         session_service = await create_session_service(tenant_id, agent_name, model_used)
+=======
+    print("\n🔌 Connecting to PostgreSQL...")
+    try:
+        session_service = await PostgresSessionService.create(
+            tenant_id=tenant_id, agent_name=agent_name, model_used=model_used,
+        )
+>>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
     except Exception as e:
         print(f"❌ Failed to connect: {e}")
         sys.exit(1)

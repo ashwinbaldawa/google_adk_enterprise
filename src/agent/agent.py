@@ -20,7 +20,11 @@ Be conversational, concise and friendly.
 model = os.getenv("MODEL_USED", "ollama/llama3.2")
 
 root_agent = LlmAgent(
+<<<<<<< HEAD
     model=LiteLlm(model="ollama_chat/llama3.2"),
+=======
+    model=LiteLlm(model=model),
+>>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
     name=os.getenv("AGENT_NAME", "assistant"),
     description="A helpful assistant with memory and tools, backed by PostgreSQL.",
     instruction=AGENT_INSTRUCTION,

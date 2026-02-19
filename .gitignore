@@ -11,11 +11,14 @@ venv/
 # Environment
 .env
 
+<<<<<<< HEAD
 # SQLite
 *.db
 *.db-wal
 *.db-shm
 
+=======
+>>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
 # IDE
 .idea/
 .vscode/
