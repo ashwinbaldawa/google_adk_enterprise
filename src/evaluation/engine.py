@@ -110,7 +110,6 @@ async def fetch_events(
     return events
 
 
-<<<<<<< HEAD
 def fetch_events_sqlite(
     app_name: str, session_id: Optional[str] = None, limit: int = 50,
 ) -> list[dict]:
@@ -145,8 +144,6 @@ def fetch_events_sqlite(
     return events
 
 
-=======
->>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
 async def store_score(
     pool, app_name, session_id, event_id, tenant_id,
     metric_name, score, label, reasoning, evaluator, eval_model,
@@ -164,7 +161,6 @@ async def store_score(
     )
 
 
-<<<<<<< HEAD
 def store_score_sqlite(
     app_name, session_id, event_id, tenant_id,
     metric_name, score, label, reasoning, evaluator, eval_model,
@@ -206,18 +202,6 @@ async def run_evaluation(session_id: Optional[str] = None, limit: int = 50):
     else:
         pool = None
         db_type = "sqlite"
-=======
-async def run_evaluation(session_id: Optional[str] = None, limit: int = 50):
-    """Run the full evaluation pipeline."""
-    from src.db.connection import get_dsn
-
-    app_name = os.getenv("APP_NAME", "my_adk_agent")
-    tenant_id = os.getenv("TENANT_ID", "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
-    agent_name = os.getenv("AGENT_NAME", "assistant")
-
-    judge = OllamaJudge()
-    pool = await asyncpg.create_pool(dsn=get_dsn(), min_size=1, max_size=3)
->>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
 
     print(f"\n{'='*60}")
     print(f"🔍 Agent Evaluation Pipeline")
@@ -228,16 +212,11 @@ async def run_evaluation(session_id: Optional[str] = None, limit: int = 50):
     print(f"{'='*60}\n")
 
     # Fetch & group
-<<<<<<< HEAD
     print("📥 Fetching events...")
     if db_type == "postgres":
         events = await fetch_events(pool, app_name, session_id, limit)
     else:
         events = fetch_events_sqlite(app_name, session_id, limit)
-=======
-    print("📥 Fetching events from Postgres...")
-    events = await fetch_events(pool, app_name, session_id, limit)
->>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
     print(f"   Found {len(events)} events")
 
     if not events:
@@ -279,7 +258,6 @@ async def run_evaluation(session_id: Optional[str] = None, limit: int = 50):
 
         for metric_name, (label, score, reason) in evals:
             totals[metric_name].append(score)
-<<<<<<< HEAD
             if db_type == "postgres":
                 await store_score(
                     pool, app_name, sid, event_id, tenant_id,
@@ -292,13 +270,6 @@ async def run_evaluation(session_id: Optional[str] = None, limit: int = 50):
                     metric_name, score, label, reason,
                     "ollama_judge", judge.model_name,
                 )
-=======
-            await store_score(
-                pool, app_name, sid, event_id, tenant_id,
-                metric_name, score, label, reason,
-                "ollama_judge", judge.model_name,
-            )
->>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
             emoji = "✅" if score >= 0.7 else "⚠️" if score >= 0.4 else "❌"
             print(f"   {emoji} {metric_name:25s} | score={score:.2f} | {label}")
         print()
@@ -318,9 +289,5 @@ async def run_evaluation(session_id: Optional[str] = None, limit: int = 50):
     print(f"\n   Scores stored in: evaluation_scores table")
     print(f"{'='*60}\n")
 
-<<<<<<< HEAD
     if pool:
         await pool.close()
-=======
-    await pool.close()
->>>>>>> caca55d7b0ff2340cfb855e6e148fd381e6bca0d
