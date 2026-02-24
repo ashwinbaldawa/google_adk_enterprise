@@ -1,0 +1,1541 @@
+// src/App.tsx (COMPLETE and CORRECTED)
+
+import React from 'react';
+
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  Send,
+  Bot,
+  User,
+  Plus,
+  MessageSquare,
+  LogOut,
+  Search,
+  Settings,
+  ChevronDown,
+  Sparkles,
+  Command,
+  ArrowUpRight,
+  Clock,
+  Layout,
+  BarChart2,
+  ShieldCheck,
+  ArrowRight,
+  RefreshCw, // Added for refresh button
+  Filter, // Added for filter icon
+  Info, // For explanations
+  Lightbulb,
+  ArrowDownToLine
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import Markdown from 'react-markdown';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+import {
+  Chart as ChartJS,
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  ChartData,
+  // ADDED specific ChartOptions types for better type checking
+  ChartOptions,
+  ScatterController, // For scatter chart scale type inference
+  BarController,     // For bar chart scale type inference
+  LineController,    // For line chart scale type inference
+  RadarController,   // For radar chart scale type inference
+  DoughnutController
+} from 'chart.js';
+import { Radar, Line, Bar, Scatter, Doughnut } from 'react-chartjs-2';
+
+// Register Chart.js components
+ChartJS.register(
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  ScatterController, // Register controllers as well for their scale types
+  BarController,
+  LineController,
+  RadarController,
+  DoughnutController
+);
+
+import './metrics.css'; // ADDED: Import the new CSS file
+
+// Import our new constants and API service
+import { APP_NAME, DEFAULT_AGENT_NAME, BACKEND_BASE_URL } from './constants';
+import {
+  startNewConversation,
+  chatWithAgent,
+  getConversationList,
+  getConversationMessages,
+  BackendMessage,
+  BackendNewConversationResponse,
+  BackendQueryResponse,
+  BackendConversationListResponse,
+  BackendDashboardDataItem, // Imported new types and function for dashboard
+  BackendDashboardResponse,
+  DashboardQueryParams,
+  getDashboardData
+} from './services/api';
+
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+// Frontend-specific Message and ChatSession interfaces
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+}
+
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  lastUpdated: Date;
+}
+
+const MOCK_HISTORY: ChatSession[] = [];
+
+const SUGGESTED_PROMPTS = [
+  "Analyze my current benefits",
+  "Check authorization status",
+  "Claim reimbursement guide",
+  "Compare in-network vs out-network",
+  "Explain my deductible"
+];
+
+// --- New Interfaces for Metrics Tab ---
+interface ScoreCardData {
+  label: string;
+  value: number | string; // Could be average or specific score
+  description: string;
+  colorClass: string; // Tailwind color class for styling
+}
+
+interface DetailedMetricItem extends BackendDashboardDataItem {
+  // Add any frontend-specific fields if needed, or leave empty
+}
+
+
+export default function App() {
+  const [userId, setUserId] = useState<string | null>(null);
+  const [loginInput, setLoginInput] = useState('');
+  const [sessions, setSessions] = useState<ChatSession[]>(MOCK_HISTORY);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<'Chat' | 'Trace' | 'Metrics'>('Chat');
+  const [error, setError] = useState<string | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // --- Metrics Tab State --- // ADDED
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [allPrompts, setAllPrompts] = useState<string[]>([]); // All unique prompts for dropdown
+  const [selectedPromptFilter, setSelectedPromptFilter] = useState<string>(''); // Currently selected prompt for filter
+  const [allMetricsData, setAllMetricsData] = useState<DetailedMetricItem[]>([]); // ADDED: All filtered data for average score calculation
+  // const [detailedMetricsData, setDetailedMetricsData] = useState<DetailedMetricItem[]>([]);    
+  // const [totalMetricsRecords, setTotalMetricsRecords] = useState(0);
+  // const [currentPage, setCurrentPage] = useState(1);
+  // const [itemsPerPage, setItemsPerPage] = useState(5); // Default items per page for table
+  // const [sortColumn, setSortColumn] = useState<keyof BackendDashboardDataItem | null>(null);
+  // const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [isPromptDropdownOpen, setIsPromptDropdownOpen] = useState(false); // State for dropdown
+
+  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const messages = activeSession?.messages || [];
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Function to load conversation list
+  const loadConversationList = useCallback(async (currentUserId: string) => {
+    if (!currentUserId) return;
+    try {
+      const backendSessions: BackendConversationListResponse[] = await getConversationList({
+        user_id: currentUserId,
+        app_name: APP_NAME,
+      });
+
+      const mappedSessions: ChatSession[] = backendSessions.map(s => ({
+        id: s.id,
+        title: s.last_message_snippet || `Conversation ${s.id.substring(s.id.length - 4)}`, // Use snippet as title, or a default
+        messages: [], // Messages will be loaded when a session is activated
+        lastUpdated: s.last_updated_timestamp ? new Date(s.last_updated_timestamp) : new Date(),
+      }));
+      setSessions(mappedSessions);
+      if (mappedSessions.length > 0 && !activeSessionId) {
+        setActiveSessionId(mappedSessions[0].id); // Activate the first session if available
+      }
+    } catch (err: any) {
+      console.error("Error loading conversation list:", err);
+      setError(`Failed to load conversations: ${err.message}`);
+    }
+  }, [activeSessionId]);
+
+  // Load conversation list on login
+  useEffect(() => {
+    if (userId) {
+      loadConversationList(userId);
+    }
+  }, [userId, loadConversationList]);
+
+
+  // Function to load messages for a specific session
+  const loadMessagesForSession = useCallback(async (sessionId: string, currentUserId: string) => {
+    if (!sessionId || !currentUserId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const backendMessages: BackendMessage[] = await getConversationMessages({
+        session_id: sessionId,
+        user_id: currentUserId,
+        app_name: APP_NAME,
+      });
+
+      const mappedMessages: Message[] = backendMessages.map(msg => ({
+        id: msg.timestamp + msg.sender, // A simple unique ID for frontend
+        role: msg.sender === 'user' ? 'user' : 'assistant',
+        content: msg.text,
+        timestamp: new Date(msg.timestamp),
+      }));
+
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, messages: mappedMessages } : s
+      ));
+    } catch (err: any) {
+      console.error(`Error loading messages for session ${sessionId}:`, err);
+      setError(`Failed to load messages for this chat: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Effect to load messages when activeSessionId or userId changes
+  useEffect(() => {
+    if (activeSessionId && userId) {
+      const currentSession = sessions.find(s => s.id === activeSessionId);
+      if (!currentSession || currentSession.messages.length === 0 || currentSession.id !== activeSessionId) {
+         loadMessagesForSession(activeSessionId, userId);
+      }
+    }
+  }, [activeSessionId, userId, sessions, loadMessagesForSession]);
+
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loginInput.trim()) {
+      setUserId(loginInput.trim());
+    }
+  };
+
+  const handleSend = async (text: string = input) => {
+    const messageText = text.trim();
+    if (!messageText || isLoading || !userId || !activeSessionId) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: messageText,
+      timestamp: new Date(),
+    };
+
+    setSessions(prev => prev.map(s =>
+      s.id === activeSessionId
+        ? { ...s, messages: [...s.messages, userMessage], lastUpdated: new Date() }
+        : s
+    ));
+
+    setInput('');
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response: BackendQueryResponse = await chatWithAgent({
+        query: messageText,
+        user_id: userId,
+        session_id: activeSessionId,
+        app_name: APP_NAME,
+        agent_name: DEFAULT_AGENT_NAME,
+      });
+
+      const assistantMessage: Message = {
+        id: response.messageId || (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: response.response || "No response from server.",
+        timestamp: new Date(),
+      };
+
+      setSessions(prev => prev.map(s =>
+        s.id === activeSessionId
+          ? { ...s, messages: [...s.messages, assistantMessage], lastUpdated: new Date() }
+          : s
+      ));
+
+    } catch (err: any) {
+      console.error("Error sending message:", err);
+      setError(`Failed to send message: ${err.message}`);
+      setSessions(prev => prev.map(s =>
+        s.id === activeSessionId
+          ? { ...s, messages: s.messages.filter(msg => msg.id !== userMessage.id) }
+          : s
+      ));
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: "I apologize, but I couldn't process your message. Please try again.",
+        timestamp: new Date(),
+      };
+      setSessions(prev => prev.map(s =>
+        s.id === activeSessionId ? { ...s, messages: [...s.messages, errorMessage] } : s
+      ));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const createNewChat = async () => {
+    if (!userId) {
+      setError("Cannot create new chat without a user ID.");
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const backendResponse: BackendNewConversationResponse = await startNewConversation({
+        user_id: userId,
+        user_query: "Hello!",
+        app_name: APP_NAME,
+        agent_name: DEFAULT_AGENT_NAME,
+        session_id: null,
+      });
+
+      const newSession: ChatSession = {
+        id: backendResponse.id,
+        title: backendResponse.title,
+        messages: backendResponse.messages.map(msg => ({
+          id: msg.timestamp + msg.sender,
+          role: msg.sender === 'user' ? 'user' : 'assistant',
+          content: msg.text,
+          timestamp: new Date(msg.timestamp),
+        })),
+        lastUpdated: new Date(),
+      };
+
+      setSessions(prev => [newSession, ...prev.filter(s => s.id !== newSession.id)]);
+      setActiveSessionId(newSession.id);
+      setInput('');
+    } catch (err: any) {
+      console.error("Error creating new chat session:", err);
+      setError(`Failed to create new chat: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    if (activeSessionId === sessionId) return;
+    setActiveSessionId(sessionId);
+  };
+
+  // --- Metrics Tab Logic --- // ADDED
+  const fetchMetricsData = useCallback(async () => { // MODIFIED
+    setMetricsLoading(true);
+    setMetricsError(null);
+    try {
+      // 1. Fetch ALL filtered data for score calculation and CSV download
+      const fullParams: DashboardQueryParams = {
+        prompt_filter: selectedPromptFilter || undefined,
+        all_data: true, // Request ALL data matching filter
+      };
+      const fullResponse = await getDashboardData(fullParams);
+      setAllMetricsData(fullResponse.detailed_data); // Store ALL data for averages
+
+      // Extract unique prompts from the FULL data for the dropdown
+      const uniquePrompts = new Set<string>();
+      fullResponse.detailed_data.forEach(item => uniquePrompts.add(item.prompt));
+      setAllPrompts(['All Prompts', ...Array.from(uniquePrompts)]);
+      
+    } catch (err: any) {
+      console.error("Error fetching metrics data:", err);
+      setMetricsError(`Failed to load metrics: ${err.message}`);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [selectedPromptFilter]);
+
+  // src/App.tsx
+
+// ... (useEffect for fetchMetricsData) ...
+
+  // Recalculate average scores whenever detailedMetricsData changes // ADDED
+  const averageScores = useMemo(() => {
+    if (allMetricsData.length === 0) { // CHANGED from detailedMetricsData to allMetricsData
+      return {
+        harmlessness_score: 0,
+        conciseness_score: 0,
+        malice_score: 0,
+        fairness_score: 0,
+        toxicity_score: 0,
+        answer_correctness_score: 0,
+        tool_name_match_score: 0,
+      };
+    }
+
+    const sumScores = allMetricsData.reduce((acc, item) => { // CHANGED from detailedMetricsData to allMetricsData
+      acc.harmlessness_score += item.harmlessness_score;
+      acc.conciseness_score += item.conciseness_score;
+      acc.malice_score += item.malice_score;
+      acc.fairness_score += item.fairness_score;
+      acc.toxicity_score += item.toxicity_score;
+      acc.answer_correctness_score += item.answer_correctness_score;
+      acc.tool_name_match_score += item.tool_name_match_score;
+      return acc;
+    }, {
+      harmlessness_score: 0,
+      conciseness_score: 0,
+      malice_score: 0,
+      fairness_score: 0,
+      toxicity_score: 0,
+      answer_correctness_score: 0,
+      tool_name_match_score: 0,
+    });
+
+    const count = allMetricsData.length; // CHANGED from detailedMetricsData to allMetricsData
+    return {
+      harmlessness_score: parseFloat((sumScores.harmlessness_score / count).toFixed(2)),
+      conciseness_score: parseFloat((sumScores.conciseness_score / count).toFixed(2)),
+      malice_score: parseFloat((sumScores.malice_score / count).toFixed(2)),
+      fairness_score: parseFloat((sumScores.fairness_score / count).toFixed(2)),
+      toxicity_score: parseFloat((sumScores.toxicity_score / count).toFixed(2)),
+      answer_correctness_score: parseFloat((sumScores.answer_correctness_score / count).toFixed(2)),
+      tool_name_match_score: parseFloat((sumScores.tool_name_match_score / count).toFixed(2)),
+    };
+  }, [allMetricsData]); // CHANGED dependency to allMetricsData
+
+  const scoreCards: ScoreCardData[] = useMemo(() => ([
+    { label: 'Harmlessness', value: averageScores.harmlessness_score, description: 'Avg. harmlessness score of responses (1-5)', colorClass: 'text-emerald-500' },
+    { label: 'Conciseness', value: averageScores.conciseness_score, description: 'Avg. conciseness score of responses (1-5)', colorClass: 'text-blue-500' },
+    { label: 'Malice', value: averageScores.malice_score, description: 'Avg. malice score (1-5, lower is better)', colorClass: 'text-rose-500' },
+    { label: 'Fairness', value: averageScores.fairness_score, description: 'Avg. fairness score of responses (1-5)', colorClass: 'text-purple-500' },
+    { label: 'Toxicity', value: averageScores.toxicity_score, description: 'Avg. toxicity score (1-5, lower is better)', colorClass: 'text-red-500' },
+    { label: 'Correctness', value: averageScores.answer_correctness_score, description: 'Avg. correctness of answers (1-5)', colorClass: 'text-yellow-600' },
+    { label: 'Tool Match', value: averageScores.tool_name_match_score, description: 'Avg. tool name match score (0-1)', colorClass: 'text-cyan-500' },
+  ]), [averageScores]); // No change here, still depends on averageScores
+
+  // src/App.tsx
+
+// ... (scoreCards useMemo) ...
+
+  const handlePromptFilterChange = (prompt: string) => { // ADDED
+    setSelectedPromptFilter(prompt === 'All Prompts' ? '' : prompt);
+    setIsPromptDropdownOpen(false);
+  };
+
+  // Login View
+  if (!userId) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-[#f8fafc] p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl shadow-brand/5 border border-zinc-100 p-10 space-y-8"
+        >
+          <div className="flex flex-col items-center text-center space-y-4">
+            <div className="w-16 h-16 bg-brand rounded-2xl flex items-center justify-center text-white shadow-xl shadow-brand/20">
+              <ShieldCheck size={32} />
+            </div>
+            <div className="space-y-1">
+              <h1 className="text-3xl font-bold tracking-tight text-zinc-900">
+                Domain <span className="text-brand">Agents</span>
+              </h1>
+              <p className="text-zinc-500 text-sm">Enter your credentials to access the workspace</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-6">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-400 uppercase tracking-widest ml-1">User Identifier</label>
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400">
+                  <User size={18} />
+                </div>
+                <input
+                  type="text"
+                  value={loginInput}
+                  onChange={(e) => setLoginInput(e.target.value)}
+                  placeholder="e.g. 128803798001"
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl py-4 pl-12 pr-4 text-zinc-900 focus:ring-4 focus:ring-brand/10 focus:border-brand transition-all outline-none"
+                  required
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-brand text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-brand-dark transition-all shadow-xl shadow-brand/20 active:scale-[0.98]"
+            >
+              Access Workspace
+              <ArrowRight size={18} />
+            </button>
+          </form>
+
+          <div className="pt-4 text-center">
+            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-[0.2em]">
+              Enterprise Secure Access • v2.4.0
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen bg-[#f8fafc] font-sans text-zinc-900 overflow-hidden">
+      {/* Sidebar - Glassmorphism */}
+      <AnimatePresence mode="wait">
+        {isSidebarOpen && (
+          <motion.aside
+            initial={{ x: -300, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: -300, opacity: 0 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="w-72 glass border-r border-zinc-200/50 flex flex-col z-20"
+          >
+            <div className="p-6 flex items-center justify-between">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center text-white shadow-lg shadow-brand/20">
+                    <Command size={16} />
+                  </div>
+                  <span className="text-lg font-bold tracking-tight text-zinc-900">Domain</span>
+                </div>
+                <span className="text-[10px] font-bold text-brand uppercase tracking-[0.3em] ml-10 -mt-1">Agents</span>
+              </div>
+              <button
+                onClick={() => setIsSidebarOpen(false)}
+                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 transition-colors"
+              >
+                <Layout size={18} />
+              </button>
+            </div>
+
+            <div className="px-4 mb-4">
+              <button
+                onClick={createNewChat}
+                className="w-full bg-brand text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-brand-dark transition-all shadow-xl shadow-brand/20 active:scale-[0.98]"
+                disabled={isLoading || !userId}
+              >
+                <Plus size={18} />
+                New Chat
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 no-scrollbar space-y-6 pb-8">
+              <div>
+                <div className="px-3 py-2 text-[10px] font-bold text-zinc-400 uppercase tracking-[0.15em]">
+                  Recent Activity
+                </div>
+                <div className="space-y-1">
+                  {sessions.map((session) => (
+                    <button
+                      key={session.id}
+                      onClick={() => handleSelectSession(session.id)}
+                      className={cn(
+                        "w-full text-left px-3 py-3 rounded-xl text-[14px] transition-all flex items-center gap-3 group relative",
+                        activeSessionId === session.id
+                          ? "bg-white shadow-sm border border-zinc-200/50 text-zinc-900 font-medium"
+                          : "text-zinc-500 hover:bg-zinc-100/50 hover:text-zinc-900"
+                      )}
+                    >
+                      <MessageSquare size={16} className={cn(
+                        activeSessionId === session.id ? "text-brand" : "text-zinc-300 group-hover:text-zinc-400"
+                      )} />
+                      <span className="truncate flex-1">{session.title}</span>
+                      {activeSessionId === session.id && (
+                        <motion.div layoutId="activeIndicator" className="w-1 h-4 bg-brand rounded-full absolute left-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-zinc-200/50 space-y-1">
+              <button className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-zinc-500 hover:bg-zinc-100 rounded-xl transition-colors">
+                <Settings size={18} />
+                Settings
+              </button>
+              <button
+                onClick={() => {
+                  setUserId(null);
+                  setSessions([]);
+                  setActiveSessionId(null);
+                  setLoginInput('');
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-rose-500 hover:bg-rose-50 rounded-xl transition-colors"
+              >
+                <LogOut size={18} />
+                Sign Out
+              </button>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col relative overflow-hidden">
+        {/* Top Header */}
+        <header className="h-20 flex items-center justify-between px-8 z-10 shrink-0">
+          <div className="flex items-center gap-4">
+            {!isSidebarOpen && (
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-2 hover:bg-zinc-100 rounded-lg text-zinc-400 transition-colors"
+              >
+                <Layout size={18} />
+              </button>
+            )}
+
+            <nav className="flex items-center gap-1 ml-4">
+              {(['Chat', 'Trace', 'Metrics'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={cn(
+                    "px-4 py-2 text-sm font-semibold rounded-xl transition-all",
+                    activeTab === tab
+                      ? "bg-brand/10 text-brand"
+                      : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100"
+                  )}
+                >
+                  {tab}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3 bg-white border border-zinc-200/50 rounded-2xl px-4 py-2 shadow-sm">
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Logged in as</span>
+                <span className="text-sm font-bold text-zinc-900">{userId}</span>
+              </div>
+              <div className="w-9 h-9 rounded-xl bg-brand/10 flex items-center justify-center text-brand font-bold">
+                {userId?.charAt(0).toUpperCase()}
+              </div>
+            </div>
+            <button className="p-2.5 bg-white border border-zinc-200 rounded-xl text-zinc-500 hover:text-zinc-900 shadow-sm transition-all">
+              <Search size={18} />
+            </button>
+          </div>
+        </header>
+
+        {/* Error Message Display */}
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-rose-100 border-l-4 border-rose-500 text-rose-700 p-4 mx-8 my-4 rounded-md"
+            role="alert"
+          >
+            <p className="font-bold">Error</p>
+            <p>{error}</p>
+          </motion.div>
+        )}
+
+
+        {/* Content Viewport */}
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {activeTab === 'Chat' ? (
+            <>
+              <div
+                ref={chatContainerRef}
+                className="flex-1 overflow-y-auto px-8 py-4 no-scrollbar"
+              >
+                <div className="max-w-4xl mx-auto w-full">
+                  {messages.length === 0 && !isLoading && !error && !activeSessionId ? (
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="h-[60vh] flex flex-col items-center justify-center text-center"
+                    >
+                      <div className="w-24 h-24 bg-white rounded-[2rem] shadow-2xl shadow-brand/10 flex items-center justify-center text-brand mb-8 relative">
+                        <Sparkles size={40} className="animate-pulse" />
+                        <div className="absolute -top-2 -right-2 w-6 h-6 bg-emerald-500 rounded-full border-4 border-white" />
+                      </div>
+                      <h2 className="text-4xl font-bold text-zinc-900 mb-4 tracking-tight">How can I assist you today?</h2>
+                      <p className="text-zinc-500 max-w-md mx-auto text-lg leading-relaxed">
+                        Your intelligent health companion is ready to help with benefits, claims, and coverage analysis.
+                      </p>
+                    </motion.div>
+                  ) : (
+                    <div className="space-y-10 pb-12">
+                      {messages.map((message) => (
+                        <motion.div
+                          key={message.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className={cn(
+                            "flex gap-6 group",
+                            message.role === 'user' ? "flex-row-reverse" : "flex-row"
+                          )}
+                        >
+                          <div className={cn(
+                            "w-10 h-10 rounded-2xl flex-shrink-0 flex items-center justify-center shadow-sm transition-transform group-hover:scale-110",
+                            message.role === 'user' ? "bg-zinc-900 text-white" : "bg-white border border-zinc-200 text-brand"
+                          )}>
+                            {message.role === 'user' ? <User size={20} /> : <Bot size={20} />}
+                          </div>
+                          <div className={cn(
+                            "max-w-[85%] space-y-2",
+                            message.role === 'user' ? "items-end" : "items-start"
+                          )}>
+                            <div className={cn(
+                              "p-6 rounded-[2rem] shadow-sm transition-all",
+                              message.role === 'user'
+                                ? "bg-brand text-white rounded-tr-none shadow-brand/10"
+                                : "bg-white border border-zinc-200/50 text-zinc-800 rounded-tl-none"
+                            )}>
+                              <div className={cn(
+                                "markdown-body",
+                                message.role === 'user' ? "text-white" : "text-zinc-800"
+                              )}>
+                                <Markdown>{message.content}</Markdown>
+                              </div>
+                            </div>
+                            <div className={cn(
+                              "flex items-center gap-2 px-2 text-[10px] font-medium text-zinc-400 uppercase tracking-wider",
+                              message.role === 'user' ? "flex-row-reverse" : "flex-row"
+                            )}>
+                              <Clock size={10} />
+                              {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                      {isLoading && (
+                        <div className="flex gap-6">
+                          <div className="w-10 h-10 rounded-2xl bg-white border border-zinc-200 flex items-center justify-center text-brand shadow-sm">
+                            <Bot size={20} />
+                          </div>
+                          <div className="bg-white border border-zinc-200/50 p-6 rounded-[2rem] rounded-tl-none shadow-sm">
+                            <div className="flex gap-1.5">
+                              {[0, 0.2, 0.4].map(delay => (
+                                <motion.div
+                                  key={delay}
+                                  animate={{ y: [0, -6, 0] }}
+                                  transition={{ repeat: Infinity, duration: 1, delay }}
+                                  className="w-2 h-2 bg-brand/30 rounded-full"
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Floating Input Section */}
+              <div className="px-8 pb-8 pt-4">
+                <div className="max-w-4xl mx-auto">
+                  {/* Suggested Prompts - Sleek Pills */}
+                  <AnimatePresence>
+                    {messages.length === 0 && !isLoading && !error && activeSessionId && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        className="flex flex-wrap justify-center gap-2.5 mb-8"
+                      >
+                        {SUGGESTED_PROMPTS.map((prompt) => (
+                          <button
+                            key={prompt}
+                            onClick={() => handleSend(prompt)}
+                            className="px-5 py-2.5 bg-white border border-zinc-200 rounded-2xl text-[13px] font-medium text-zinc-600 hover:border-brand hover:text-brand hover:shadow-lg hover:shadow-brand/5 transition-all flex items-center gap-2 group"
+                          >
+                            {prompt}
+                            <ArrowUpRight size={14} className="text-zinc-300 group-hover:text-brand transition-colors" />
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Input Box - Refined Color & Style */}
+                  <div className="relative bg-white rounded-[2.5rem] p-3 flex items-end gap-3 shadow-2xl shadow-brand/5 border border-zinc-200/50 group focus-within:border-brand/30 focus-within:ring-4 ring-brand/5 transition-all">
+                    <div className="p-3 text-zinc-400 group-focus-within:text-brand transition-colors">
+                      <Command size={22} />
+                    </div>
+                    <textarea
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSend();
+                        }
+                      }}
+                      placeholder="Ask anything about your health plan..."
+                      className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-2 text-zinc-900 text-lg placeholder:text-zinc-400 min-h-[56px] max-h-48"
+                      rows={1}
+                      disabled={isLoading || !userId || !activeSessionId}
+                    />
+                    <div className="flex items-center gap-2 pb-1 pr-1">
+                      <button
+                        onClick={() => handleSend()}
+                        disabled={!input.trim() || isLoading || !userId || !activeSessionId}
+                        className={cn(
+                          "w-12 h-12 rounded-full transition-all flex items-center justify-center",
+                          input.trim() && !isLoading && userId && activeSessionId
+                            ? "bg-brand text-white shadow-xl shadow-brand/20 hover:scale-110 active:scale-90"
+                            : "bg-zinc-100 text-zinc-300 cursor-not-allowed"
+                        )}
+                      >
+                        <Send size={20} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex justify-center gap-6 text-[10px] font-bold text-zinc-400 uppercase tracking-[0.2em]">
+                    <span>Secure Connection</span>
+                    <span className="text-zinc-200">|</span>
+                    <span>AI Powered Analysis</span>
+                    <span className="text-zinc-200">|</span>
+                    <span>v2.4.0</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : activeTab === 'Trace' ? (
+
+            // Use an iframe to embed the external observability tool
+            <div className="flex-1 flex flex-col p-2 bg-gray-50"> 
+              <iframe
+                src="http://localhost:6006" 
+                title="System Traces"
+                className="flex-1 w-full h-full border-none rounded-lg shadow-inner"
+              />
+            </div>            
+          ) : (
+            // Metrics Tab Content
+            <div className="metrics-page-container"> {/* Use a custom class from metrics.css */}
+              {/* Top Nav (from your template, but we'll integrate into React's header) */}
+              {/* <div class="top-nav">...</div> */}
+
+              {/* Main Content */}
+              <div className="main"> {/* Use custom class from metrics.css */}
+                <div className="section-title">Evaluation Metrics</div>
+                <div className="section-subtitle">
+                  AI Response Quality Assessment — Aggregate across {allMetricsData.length} evaluated queries
+                </div>
+
+                {/* Query Bar (Dropdown, Refresh, Download CSV) */}
+                <div className="query-bar">
+                    <div className="query-icon">
+                        <Filter size={16} /> {/* Using Lucide icon */}
+                    </div>
+                    <div className="query-text">
+                        <div className="relative">
+                            <button
+                                onClick={() => setIsPromptDropdownOpen(!isPromptDropdownOpen)}
+                                className="w-full text-left flex items-center justify-between"
+                            >
+                                {selectedPromptFilter || 'All Prompts'}
+                                <ChevronDown size={16} className={cn("transition-transform", isPromptDropdownOpen && "rotate-180")} />
+                            </button>
+                            <AnimatePresence>
+                                {isPromptDropdownOpen && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -10 }}
+                                    className="absolute z-20 mt-2 w-full rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none max-h-60 overflow-y-auto"
+                                >
+                                    {allPrompts.map((promptOption) => (
+                                    <button
+                                        key={promptOption}
+                                        onClick={() => handlePromptFilterChange(promptOption)}
+                                        className="block px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-100 w-full text-left truncate"
+                                    >
+                                        {promptOption}
+                                    </button>
+                                    ))}
+                                </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+                    </div>
+                    <div className="query-actions">
+                        <button onClick={fetchMetricsData} className="btn-sm" disabled={metricsLoading}>
+                            <RefreshCw size={14} className={cn(metricsLoading && "animate-spin")} /> Refresh
+                        </button>
+                        <button
+                            onClick={() => {
+                                // CSV Download Logic
+                                if (allMetricsData.length === 0) return;
+
+                                const headers = Object.keys(allMetricsData[0]).filter(key => 
+                                    !key.endsWith('_explanation') && // Exclude explanation fields from CSV
+                                    key !== 'response_tools' &&      // Exclude tool fields
+                                    key !== 'ground_truth_tools'     // Exclude tool fields
+                                ).join(',');
+                                
+                                const csvContent = [
+                                    headers,
+                                    ...allMetricsData.map(row => 
+                                        Object.keys(row).filter(key => 
+                                            !key.endsWith('_explanation') && 
+                                            key !== 'response_tools' && 
+                                            key !== 'ground_truth_tools'
+                                        ).map(fieldName => 
+                                            JSON.stringify(row[fieldName as keyof BackendDashboardDataItem])
+                                        ).join(',')
+                                    )
+                                ].join('\n');
+
+                                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                                const link = document.createElement('a');
+                                if (link.download !== undefined) {
+                                    const url = URL.createObjectURL(blob);
+                                    link.setAttribute('href', url);
+                                    link.setAttribute('download', 'evaluation_metrics.csv');
+                                    link.style.visibility = 'hidden';
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                }
+                            }}
+                            disabled={metricsLoading || allMetricsData.length === 0}
+                            className="btn-sm"
+                        >
+                            <ArrowDownToLine size={14} /> Download CSV
+                        </button>
+                    </div>
+                </div>
+
+                {/* Score Cards */}
+                {metricsLoading && allMetricsData.length === 0 ? (
+                  <div className="cards-grid">
+                    {[...Array(7)].map((_, i) => (
+                      <div key={i} className="score-card animate-pulse h-28"></div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="cards-grid">
+                    {scoreCards.map((card, i) => (
+                      <div key={i} className="score-card">
+                        <div className="score-label">{card.label}</div>
+                        <div className={cn(
+                          "score-value",
+                          Number(card.value) >= 4.5 ? "good" : Number(card.value) >= 3 ? "warning" : "danger" // Dynamic color based on score value
+                        )}>
+                          {card.value}
+                        </div>
+                        <div className="score-desc">{card.description}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Interactive Graphics Section */}
+                <div className="section-header">
+                  <div>
+                    <div className="section-title">Interactive Graphics & Trends</div>
+                    <div className="section-subtitle">Visual story of your AI agent's evaluation performance</div>
+                  </div>
+                </div>
+
+                {metricsLoading && allMetricsData.length === 0 ? (
+                    <div className="charts-grid">
+                        <div className="chart-card animate-pulse h-[340px]"></div>
+                        <div className="chart-card animate-pulse h-[340px]"></div>
+                    </div>
+                ) : allMetricsData.length === 0 ? (
+                    <div className="bg-white border border-cream-dark rounded-xl p-8 shadow-sm h-64 flex items-center justify-center text-text-muted">
+                        <div className="flex flex-col items-center gap-4">
+                            <Info size={48} />
+                            <span className="text-sm font-medium">No data available for charts with current filters.</span>
+                        </div>
+                    </div>
+                ) : (
+                    <>
+                        {/* Row 1: Radar + Trend Line */}
+                        <div className="charts-grid">
+                            <div className="chart-card">
+                                <div className="chart-title">🎯 Quality Snapshot — Radar View</div>
+                                <div className="chart-desc">All metrics at a glance for the selected query. Ideal shape = full pentagon.</div>
+                                <div className="chart-container">
+                                    <Radar data={getRadarChartData(averageScores)} options={getRadarChartOptions()} />
+                                </div>
+                            </div>
+                            <div className="chart-card">
+                                <div className="chart-title">📈 Score Trends Over Queries</div>
+                                <div className="chart-desc">Track how each metric evolves across evaluated queries.</div>
+                                <div className="chart-container">
+                                    <Line data={getLineChartData(allMetricsData)} options={getLineChartOptions()} />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Row 2: Distribution + Correlation */}
+                        <div className="charts-grid">
+                            <div className="chart-card">
+                                <div className="chart-title">📊 Score Distribution per Metric</div>
+                                <div className="chart-desc">How scores are spread — helps identify consistency vs variance in responses.</div>
+                                <div className="chart-container">
+                                    <Bar data={getDistributionChartData(allMetricsData)} options={getDistributionChartOptions()} />
+                                </div>
+                            </div>
+                            <div className="chart-card">
+                                <div className="chart-title">🔗 Metric Correlation: Correctness vs Conciseness</div>
+                                <div className="chart-desc">Are correct answers also concise? Scatter reveals the relationship.</div>
+                                <div className="chart-container">
+                                    <Scatter data={getScatterChartData(allMetricsData)} options={getScatterChartOptions()} />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Row 3: Heatmap (full width) */}
+                        <div className="charts-grid">
+                            <div className="chart-card full-width">
+                                <div className="chart-title">🗺️ Query × Metric Heatmap</div>
+                                <div className="chart-desc">Each row is a query, each column a metric. Dark green = high score, red = needs attention. Spot patterns instantly.</div>
+                                <div id="heatmapContainer">
+                                    {renderHeatmap(allMetricsData)}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Row 4: 3-col — Pass/Fail, Donut, Grouped Bar */}
+                        <div className="charts-grid-3">
+                            <div className="chart-card">
+                                <div className="chart-title">✅ Pass / Fail Summary</div>
+                                <div className="chart-desc">Threshold: score ≥ 4 is Pass. How many queries meet the bar?</div>
+                                <div id="passFailContainer">
+                                    {renderPassFail(allMetricsData)}
+                                </div>
+                            </div>
+                            <div className="chart-card">
+                                <div className="chart-title">🎯 Tool Match Rate</div>
+                                <div className="chart-desc">Correct tool selection across all evaluated queries.</div>
+                                <div className="chart-container short">
+                                    <Doughnut data={getDonutChartData(allMetricsData)} options={getDonutChartOptions()} />
+                                </div>
+                            </div>
+                            <div className="chart-card">
+                                <div className="chart-title">📊 Metric Comparison Across Query Types</div>
+                                <div className="chart-desc">How different query categories score on each metric.</div>
+                                <div className="chart-container short">
+                                    <Bar data={getGroupedBarChartData(allMetricsData)} options={getGroupedBarChartOptions()} />
+                                </div>
+                            </div>
+                        </div>
+                    </>
+                )}
+
+
+                {/* AI Insights */}
+                <div className="insight-box">
+                  <h3><Lightbulb size={18} /> Key Insights & Recommendations</h3>
+                  <ul className="insight-list">
+                    <li><strong>Harmlessness & Fairness:</strong> Consistently scoring {averageScores.harmlessness_score}/{averageScores.fairness_score} — model shows strong safety alignment across all query types.</li>
+                    <li><strong>Toxicity:</strong> Extremely low (avg {averageScores.toxicity_score}) — responses are clean and appropriate for enterprise use.</li>
+                    <li><strong>Tool Match:</strong> Average score {averageScores.tool_name_match_score}. {averageScores.tool_name_match_score < 0.5 ? 'Critical gap — the agent is not selecting the correct tools. Investigate tool routing logic.' : 'Good performance on tool matching.'}</li>
+                    <li><strong>Correctness & Conciseness:</strong> Avg {averageScores.answer_correctness_score}/{averageScores.conciseness_score}. High correctness queries tend to also score well on conciseness, suggesting well-trained retrieval.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// --- Chart Data and Options Functions (ADDED, keep them outside the App component) ---
+
+// Color Palette (matching CSS)
+const CHART_COLORS = {
+  navy: '#1a2332',
+  blue: '#3b6cb5',
+  blueLight: '#5a8fd4',
+  green: '#27ae60',
+  red: '#c0392b',
+  orange: '#e67e22',
+  purple: '#8e44ad',
+  teal: '#16a085',
+  cream: '#f5f0e8',
+  creamDark: '#e8e0d4',
+  textDark: '#2c3e50',
+  textMuted: '#7f8c8d',
+};
+
+// Default Chart.js Options (Matching template)
+ChartJS.defaults.font.family = "'DM Sans', sans-serif";
+ChartJS.defaults.font.size = 11;
+ChartJS.defaults.color = CHART_COLORS.textMuted;
+
+
+// 1. RADAR CHART DATA/OPTIONS
+// src/App.tsx
+
+// ... (CHART_COLORS and ChartJS.defaults definitions) ...
+
+// 1. RADAR CHART DATA/OPTIONS
+const getRadarChartData = (scores: typeof averageScores): ChartData<'radar'> => ({
+    labels: ['Harmlessness', 'Conciseness', 'Fairness', 'Correctness', 'Low Toxicity', 'Low Malice'],
+    datasets: [{
+      label: 'Average Scores',
+      data: [
+        scores.harmlessness_score,
+        scores.conciseness_score,
+        scores.fairness_score,
+        scores.answer_correctness_score,
+        6 - scores.toxicity_score,
+        6 - scores.malice_score,
+      ],
+      borderColor: CHART_COLORS.blue,
+      backgroundColor: 'rgba(59, 108, 181, 0.15)',
+      borderWidth: 2.5,
+      pointRadius: 5,
+      pointBackgroundColor: CHART_COLORS.blue,
+      pointBorderColor: '#fff',
+      pointBorderWidth: 2,
+    }]
+});
+
+const getRadarChartOptions = (): ChartOptions<'radar'> => ({ // ADDED type annotation
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      r: {
+        min: 0, max: 5,
+        ticks: { stepSize: 1, backdropColor: 'transparent', font: { size: 10 } },
+        grid: { color: 'rgba(0,0,0,0.06)' },
+        pointLabels: { font: { size: 11, weight: 600 }, color: CHART_COLORS.navy } // CAST weight
+      }
+    },
+    plugins: {
+      legend: { position: 'bottom' as const, labels: { padding: 16, usePointStyle: true, pointStyle: 'circle' as const } } // CAST position and pointStyle
+    }
+});
+
+// 2. TREND LINE CHART DATA/OPTIONS
+const getLineChartData = (dataItems: BackendDashboardDataItem[]): ChartData<'line'> => {
+    const queryLabels = dataItems.map((_, i) => `Query ${i + 1}`);
+    
+    const metrics = [
+        { key: 'harmlessness_score', label: 'Harmlessness', color: CHART_COLORS.blue },
+        { key: 'conciseness_score', label: 'Conciseness', color: CHART_COLORS.green },
+        { key: 'malice_score', label: 'Malice', color: CHART_COLORS.purple },
+        { key: 'fairness_score', label: 'Fairness', color: CHART_COLORS.teal },
+        { key: 'toxicity_score', label: 'Toxicity', color: CHART_COLORS.red },
+        { key: 'answer_correctness_score', label: 'Correctness', color: CHART_COLORS.orange },
+    ];
+
+    return {
+        labels: queryLabels,
+        datasets: metrics.map(metric => ({
+            label: metric.label,
+            data: dataItems.map(item => item[metric.key as keyof BackendDashboardDataItem] as number),
+            borderColor: metric.color,
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+            tension: 0.35,
+        }))
+    };
+};
+
+const getLineChartOptions = (): ChartOptions<'line'> => ({ // ADDED type annotation
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: { min: 0, max: 5.5, grid: { color: 'rgba(0,0,0,0.04)' } },
+      x: { grid: { display: false } }
+    },
+    plugins: {
+      legend: { position: 'bottom' as const, labels: { padding: 12, usePointStyle: true, pointStyle: 'circle' as const, font: { size: 10 } } }, // CAST position and pointStyle
+      tooltip: { mode: 'index' as const, intersect: false } // CAST mode
+    },
+    interaction: { mode: 'nearest' as const, intersect: false } // CAST mode
+});
+
+// 3. DISTRIBUTION (Box-style via grouped bar with min/max/avg)
+const getDistributionChartData = (dataItems: BackendDashboardDataItem[]): ChartData<'bar'> => {
+    const metrics = [
+        { key: 'harmlessness_score', label: 'Harmlessness' },
+        { key: 'conciseness_score', label: 'Conciseness' },
+        { key: 'malice_score', label: 'Malice' },
+        { key: 'fairness_score', label: 'Fairness' },
+        { key: 'toxicity_score', label: 'Toxicity' },
+        { key: 'answer_correctness_score', label: 'Correctness' },
+    ];
+    
+    const distLabels = metrics.map(m => m.label);
+    const avgScores = metrics.map(m => {
+        const values = dataItems.map(item => item[m.key as keyof BackendDashboardDataItem] as number);
+        return values.length > 0 ? (values.reduce((a,b)=>a+b,0)/values.length) : 0;
+    });
+    const minScores = metrics.map(m => {
+        const values = dataItems.map(item => item[m.key as keyof BackendDashboardDataItem] as number);
+        return values.length > 0 ? Math.min(...values) : 0;
+    });
+    const maxScores = metrics.map(m => {
+        const values = dataItems.map(item => item[m.key as keyof BackendDashboardDataItem] as number);
+        return values.length > 0 ? Math.max(...values) : 0;
+    });
+
+    return {
+        labels: distLabels,
+        datasets: [
+            { label: 'Min', data: minScores, backgroundColor: 'rgba(192, 57, 43, 0.25)', borderColor: CHART_COLORS.red, borderWidth: 1, borderRadius: 4 },
+            { label: 'Average', data: avgScores, backgroundColor: 'rgba(59, 108, 181, 0.35)', borderColor: CHART_COLORS.blue, borderWidth: 1, borderRadius: 4 },
+            { label: 'Max', data: maxScores, backgroundColor: 'rgba(39, 174, 96, 0.25)', borderColor: CHART_COLORS.green, borderWidth: 1, borderRadius: 4 },
+        ]
+    };
+};
+
+const getDistributionChartOptions = (): ChartOptions<'bar'> => ({ // ADDED type annotation
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: { min: 0, max: 5.5, grid: { color: 'rgba(0,0,0,0.04)' } },
+      x: { grid: { display: false } }
+    },
+    plugins: {
+      legend: { position: 'bottom' as const, labels: { padding: 12, usePointStyle: true, pointStyle: 'rect' as const } } // CAST position and pointStyle
+    }
+});
+
+// 4. SCATTER CHART DATA/OPTIONS
+const getScatterChartData = (dataItems: BackendDashboardDataItem[]): ChartData<'scatter'> => {
+    const scatterData = dataItems.map(item => ({
+        x: item.answer_correctness_score,
+        y: item.conciseness_score,
+    }));
+    return {
+        datasets: [{
+            label: 'Query',
+            data: scatterData,
+            backgroundColor: 'rgba(59, 108, 181, 0.5)',
+            borderColor: CHART_COLORS.blue,
+            borderWidth: 1.5,
+            pointRadius: 7,
+            pointHoverRadius: 10,
+        }]
+    };
+};
+
+const getScatterChartOptions = (): ChartOptions<'scatter'> => ({ // ADDED type annotation
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { 
+        title: { display: true, text: 'Correctness', font: { weight: 600 } }, // CAST weight
+        min: 0, max: 5.5, grid: { color: 'rgba(0,0,0,0.04)' } 
+      },
+      y: { 
+        title: { display: true, text: 'Conciseness', font: { weight: 600 } }, // CAST weight
+        min: 0, max: 5.5, grid: { color: 'rgba(0,0,0,0.04)' } 
+      },
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => `Correctness: ${ctx.raw.x}, Conciseness: ${ctx.raw.y}`
+        }
+      }
+    }
+});
+
+// 5. HEATMAP RENDERING LOGIC (React component-based, not Chart.js)
+const renderHeatmap = (dataItems: BackendDashboardDataItem[]) => {
+    if (dataItems.length === 0) {
+        return (
+            <div className="text-center text-text-muted py-4">No data to display heatmap.</div>
+        );
+    }
+    
+    // Using a subset for heatmap to keep it manageable and readable
+    const displayedItems = dataItems.slice(0, 10); 
+    const metrics = [
+        'harmlessness_score', 'conciseness_score', 'malice_score', 
+        'fairness_score', 'toxicity_score', 'answer_correctness_score'
+    ];
+    const metricLabels = [
+        'Harm.', 'Conc.', 'Mal.', 'Fair.', 'Tox.', 'Corr.'
+    ];
+
+    // src/App.tsx
+
+// ... (inside renderHeatmap function) ...
+
+    const getHeatmapCellColor = (metricKey: string, value: number) => {
+        let ratio: number;
+        if (metricKey === 'toxicity_score' || metricKey === 'malice_score') {
+            ratio = 1 - (value - 1) / 4;
+        } else {
+            ratio = (value - 1) / 4;
+        }
+        
+        // FIXED: Robust hex to RGB parsing for interpolation
+        const hexToRgb = (hex: string) => {
+            const r = parseInt(hex.substring(1, 3), 16);
+            const g = parseInt(hex.substring(3, 5), 16);
+            const b = parseInt(hex.substring(5, 7), 16);
+            return { r, g, b };
+        };
+
+        const redRgb = hexToRgb(CHART_COLORS.red);
+        const greenRgb = hexToRgb(CHART_COLORS.green);
+
+        const r = Math.round(redRgb.r * (1 - ratio) + greenRgb.r * ratio);
+        const g = Math.round(redRgb.g * (1 - ratio) + greenRgb.g * ratio);
+        const b = Math.round(redRgb.b * (1 - ratio) + greenRgb.b * ratio);
+
+        return `rgb(${r}, ${g}, ${b})`;
+    };
+
+    return (
+        <div className="heatmap-container">
+            <div 
+                className="heatmap-grid" 
+                style={{ gridTemplateColumns: `80px repeat(${metrics.length}, 1fr)` }}
+            >
+                {/* Header row */}
+                <div className="heatmap-cell heatmap-header"></div>
+                {metricLabels.map((label, i) => (
+                    <div key={`header-${i}`} className="heatmap-cell heatmap-header">{label}</div>
+                ))}
+
+                {/* Data rows */}
+                {displayedItems.map((item, itemIndex) => (
+                    <React.Fragment key={`row-${itemIndex}`}> {/* ADDED React.Fragment */}
+                        <div className="heatmap-cell heatmap-row-label">
+                            {item.prompt.substring(0, 10)}... {/* Truncate long prompts */}
+                        </div>
+                        {metrics.map((metricKey, metricIndex) => {
+                            const value = item[metricKey as keyof BackendDashboardDataItem] as number;
+                            const backgroundColor = getHeatmapCellColor(metricKey, value);
+                            // Determine text color for contrast
+                            const textColor = (metricKey === 'toxicity_score' || metricKey === 'malice_score') 
+                                ? (value <= 2 ? 'white' : CHART_COLORS.navy) 
+                                : (value >= 4 ? 'white' : CHART_COLORS.navy);
+
+                            return (
+                                <div 
+                                    key={`cell-${itemIndex}-${metricIndex}`} 
+                                    className="heatmap-cell" 
+                                    style={{ backgroundColor, color: textColor }}
+                                    title={`${item.prompt}\n${metricKey.replace('_score', '').replace(/_/g, ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}: ${value}`}
+                                >
+                                    {value.toFixed(1)}
+                                </div>
+                            );
+                        })}
+                    </React.Fragment>
+                ))}
+            </div>
+
+            {/* Legend */}
+            <div className="legend-bar">
+                <span className="legend-item"><span className="legend-dot" style={{ background:CHART_COLORS.red }}></span> Poor (1-2)</span>
+                <span className="legend-item"><span className="legend-dot" style={{ background:CHART_COLORS.orange }}></span> Fair (3)</span>
+                <span className="legend-item"><span className="legend-dot" style={{ background:CHART_COLORS.green }}></span> Excellent (4-5)</span>
+            </div>
+        </div>
+    );
+};
+
+// 6. PASS/FAIL RENDERING LOGIC (React component-based)
+const renderPassFail = (dataItems: BackendDashboardDataItem[]) => {
+    if (dataItems.length === 0) {
+        return (
+            <div className="text-center text-text-muted py-4">No data to display pass/fail.</div>
+        );
+    }
+
+    const metricsToEvaluate = [
+        { key: 'harmlessness_score', label: 'Harmlessness', type: 'high_is_good' },
+        { key: 'conciseness_score', label: 'Conciseness', type: 'high_is_good' },
+        { key: 'malice_score', label: 'Malice', type: 'low_is_good' },
+        { key: 'fairness_score', label: 'Fairness', type: 'high_is_good' },
+        { key: 'toxicity_score', label: 'Toxicity', type: 'low_is_good' },
+        { key: 'answer_correctness_score', label: 'Correctness', type: 'high_is_good' },
+    ];
+
+    const totalQueries = dataItems.length;
+
+    return (
+        <div className="pass-fail-grid">
+            {metricsToEvaluate.map((metric, i) => {
+                let passCount = 0;
+                if (metric.type === 'high_is_good') {
+                    passCount = dataItems.filter(item => (item[metric.key as keyof BackendDashboardDataItem] as number) >= 4).length;
+                } else { // low_is_good
+                    passCount = dataItems.filter(item => (item[metric.key as keyof BackendDashboardDataItem] as number) <= 2).length;
+                }
+                const failCount = totalQueries - passCount;
+                const pct = totalQueries > 0 ? (passCount / totalQueries) * 100 : 0;
+
+                return (
+                    <div key={i} className="pf-item">
+                        <div className="pf-label">{metric.label.substring(0, 8)}</div>
+                        <div className="pf-bar">
+                            <div 
+                                className={`pf-fill ${pct >= 80 ? 'green' : pct >= 50 ? 'orange' : 'red'}`} 
+                                style={{ width:`${pct}%` }}
+                            ></div>
+                        </div>
+                        <div className="pf-stat">
+                            <span className="pass">{passCount}P</span> / <span className="fail">{failCount}F</span>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
+
+
+// 7. DONUT CHART DATA/OPTIONS
+const getDonutChartData = (dataItems: BackendDashboardDataItem[]): ChartData<'doughnut'> => {
+    const toolMatched = dataItems.filter(item => item.tool_name_match_score === 1).length;
+    const toolMismatched = dataItems.length - toolMatched;
+
+    return {
+        labels: ['Matched', 'Mismatched'],
+        datasets: [{
+            data: [toolMatched, toolMismatched],
+            backgroundColor: [CHART_COLORS.green, 'rgba(192, 57, 43, 0.2)'],
+            borderColor: ['#fff', '#fff'],
+            borderWidth: 3,
+            hoverOffset: 8,
+        }]
+    };
+};
+
+const getDonutChartOptions = (): ChartOptions<'doughnut'> => ({ // ADDED type annotation
+    responsive: true,
+    maintainAspectRatio: false,
+    cutout: '65%',
+    plugins: {
+      legend: { position: 'bottom' as const, labels: { padding: 14, usePointStyle: true, pointStyle: 'circle' as const } }, // CAST position and pointStyle
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => {
+              const total = ctx.dataset.data.reduce((a: number, b: number) => a + b, 0);
+              const value = ctx.parsed;
+              const percentage = total > 0 ? ((value / total) * 100).toFixed(0) : '0';
+              return `${ctx.label}: ${value} queries (${percentage}%)`;
+          }
+        }
+      }
+    }
+});
+
+
+// 8. GROUPED BAR CHART DATA/OPTIONS
+const getGroupedBarChartData = (dataItems: BackendDashboardDataItem[]): ChartData<'bar'> => {
+    // This is the most complex as it requires "Query Types" which are not in your current data.
+    // For demonstration, I'll create a very basic categorization based on keywords in the prompt.
+    // In a real scenario, you would have a 'category' field in BackendDashboardDataItem or
+    // implement a more sophisticated prompt classification.
+    
+    const categories: { [key: string]: BackendDashboardDataItem[] } = {
+        'Insurance': [],
+        'Benefits': [],
+        'Claims': [],
+        'Coverage': [],
+        'Other': []
+    };
+
+    dataItems.forEach(item => {
+        const lowerPrompt = item.prompt.toLowerCase();
+        if (lowerPrompt.includes('insurance') || lowerPrompt.includes('plan')) {
+            categories['Insurance'].push(item);
+        } else if (lowerPrompt.includes('benefits') || lowerPrompt.includes('deductible')) {
+            categories['Benefits'].push(item);
+        } else if (lowerPrompt.includes('claim') || lowerPrompt.includes('reimbursement') || lowerPrompt.includes('appeal')) {
+            categories['Claims'].push(item);
+        } else if (lowerPrompt.includes('coverage')) {
+            categories['Coverage'].push(item);
+        } else {
+            categories['Other'].push(item);
+        }
+    });
+
+    const categoryLabels = Object.keys(categories).filter(cat => categories[cat].length > 0);
+
+    const getAverageForCategory = (categoryData: BackendDashboardDataItem[], metricKey: keyof BackendDashboardDataItem) => {
+        const values = categoryData.map(item => item[metricKey] as number);
+        return values.length > 0 ? parseFloat((values.reduce((a: number,b: number)=>a+b,0)/values.length).toFixed(2)) : 0; // ADDED type annotation for reduce
+    };
+
+    return {
+        labels: categoryLabels,
+        datasets: [
+            { 
+                label: 'Correctness', 
+                data: categoryLabels.map(cat => getAverageForCategory(categories[cat], 'answer_correctness_score')), 
+                backgroundColor: CHART_COLORS.blue, borderRadius: 4 
+            },
+            { 
+                label: 'Conciseness', 
+                data: categoryLabels.map(cat => getAverageForCategory(categories[cat], 'conciseness_score')), 
+                backgroundColor: CHART_COLORS.teal, borderRadius: 4 
+            },
+            { 
+                label: 'Fairness', 
+                data: categoryLabels.map(cat => getAverageForCategory(categories[cat], 'fairness_score')), 
+                backgroundColor: CHART_COLORS.purple, borderRadius: 4 
+            },
+        ]
+    };
+};
+
+const getGroupedBarChartOptions = (): ChartOptions<'bar'> => ({ // ADDED type annotation
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: { min: 0, max: 5.5, grid: { color: 'rgba(0,0,0,0.04)' } },
+      x: { grid: { display: false } }
+    },
+    plugins: {
+      legend: { position: 'bottom' as const, labels: { padding: 10, usePointStyle: true, pointStyle: 'rect' as const, font: { size: 10 } } } // CAST position and pointStyle
+    }
+});
